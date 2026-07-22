@@ -21,6 +21,7 @@ ALLOWED_BASE_DIRS = [
     Path.home() / "data",
     Path("/tmp"),
     Path("/var/tmp"),
+    Path("/data")
 ]
 
 # Global base directory, set via --dir at server startup.
