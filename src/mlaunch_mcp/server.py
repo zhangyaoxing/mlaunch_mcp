@@ -90,6 +90,7 @@ async def _run_mlaunch(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE if input_data else None,
+            start_new_session=True,
         )
 
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -469,3 +470,7 @@ def main() -> None:
 
     sys.argv = [sys.argv[0]] + remaining
     mcp.run()
+
+
+if __name__ == "__main__":
+    main()
