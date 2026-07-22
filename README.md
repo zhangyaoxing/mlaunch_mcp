@@ -5,40 +5,64 @@ MCP (Model Context Protocol) server for [mtools/mlaunch](https://github.com/ruec
 ## Requirements
 
 - Python 3.10+
-- [mtools](https://github.com/rueckstiess/mtools) installed (`pip install mtools`)
-- MongoDB binaries available in PATH or specified via `--binarypath`
+- [mtools](https://github.com/rueckstiess/mtools) (`pip install mtools`)
+- MongoDB binaries — managed via [`m`](https://github.com/aheckmann/m) or in PATH
 
 ## Installation
 
 ```bash
 git clone https://github.com/<your-repo>/mlaunch-mcp.git
 cd mlaunch_mcp
-uv venv && uv pip install -e .
+pip install -e .
+```
+
+## MongoDB Version Management with `m`
+
+[`m`](https://github.com/aheckmann/m) is a MongoDB version manager (like nvm
+for Node).  It installs multiple MongoDB versions side-by-side and provides
+the `--binarypath` that `mlaunch init` needs.
+
+```bash
+# Install m
+npm install -g m
+
+# Install MongoDB versions
+m 7.0          # latest 7.0.x
+m 8.0.26       # specific version
+
+# List installed versions (with paths)
+m installed --json
+# → [{"name":"8.0.26","path":"$HOME/.local/m/versions/8.0.26/bin/"}, ...]
+
+# Get binary path for a version
+m bin 8.0.26
+
+# Use a version
+m 8.0.26
 ```
 
 ## MCP Client Configuration
 
-Add to your MCP client's configuration:
+Add to your MCP client's config (e.g. OpenClaw `~/.openclaw/openclaw.json`):
 
 ```json
 {
   "mcpServers": {
     "mlaunch": {
-      "command": "/path/to/mlaunch_mcp/.venv/bin/python",
-      "args": ["-m", "mlaunch_mcp.server", "--dir", "/tmp/my-clusters"]
+      "command": "python",
+      "args": ["-m", "mlaunch_mcp.server", "--dir", "/data/Workspace/mongodb"]
     }
   }
 }
 ```
 
-The `--dir` startup argument sets a **base** directory.  Each cluster is
-created in its own subdirectory under this base:
+The `--dir` argument sets the base directory for all cluster data:
 
 ```
 <base_dir>/
-├── my-cluster/     # cluster_name = "my-cluster"
-├── staging/        # cluster_name = "staging"
-└── cluster_a1b2c3d4/  # auto-generated random name
+├── rs70/           # cluster_name = "rs70"
+├── ss80/           # cluster_name = "ss80"
+└── cluster_a1b2c3/ # auto-generated random name
 ```
 
 ## Available Tools
@@ -49,73 +73,120 @@ created in its own subdirectory under this base:
 | `mlaunch_start` | Start stopped nodes in an existing cluster |
 | `mlaunch_stop` | Stop running nodes in a cluster |
 | `mlaunch_restart` | Restart nodes (stop then start) |
-| `mlaunch_list` | List all nodes with status and connection info (structured JSON) |
+| `mlaunch_list` | List all nodes with status in structured JSON |
 | `mlaunch_kill` | Send a signal to nodes |
 
-All tools accept a **`cluster_name`** parameter that identifies which
-subdirectory to use.  It is combined with the server-level `--dir` base.
+### `mlaunch_init`
 
-### Tool Details
+**Key parameters:**
 
-#### `mlaunch_init`
+| Parameter | Description |
+|-----------|-------------|
+| `topology` | `"single"`, `"replicaset"`, or `"sharded"` |
+| `cluster_name` | Subdirectory name. Random name generated when omitted. |
+| `nodes` | Number of data nodes per replica set (default: 3) |
+| `name` | Replica set name |
+| `sharded` | Shard definition, e.g. `"2"` (2 shards) or `"2/3"` (2 shards × 3 nodes each) |
+| `config` | Number of config server nodes (sharded only, default: 1) |
+| `csrs` | Use a replica set for config servers |
+| `mongos` | Number of mongos routers (sharded only, default: 1) |
+| `arbiter` | Add an arbiter node |
+| `priority` | Enable priority-based elections |
+| `auth` | Enable authentication |
+| `username` / `password` | Auth credentials |
+| `port` | Base port number |
+| `binarypath` | Path to MongoDB binaries (use `m bin <version>` output) |
 
-Create and start a new MongoDB cluster.
+**Examples:**
 
-Key parameters:
-- **`cluster_name`**: Subdirectory name for the cluster.  A random name
-  (e.g. `cluster_a1b2c3d4`) is generated when omitted.
-- `topology`: `"single"`, `"replicaset"`, or `"sharded"`
-- `nodes`: Number of data nodes (replica set, default: 3)
-- `name`: Replica set name
-- `arbiter`: Add an arbiter node
-- `auth`: Enable authentication
-- `username` / `password`: Auth credentials
-- `port`: Base port number
-- `binarypath`: Path to MongoDB binaries
+```python
+# Replica set — MongoDB 7.0, 3 nodes
+mlaunch_init(
+    topology="replicaset",
+    cluster_name="rs70",
+    name="rs70",
+    binarypath="/home/user/.local/m/versions/7.0.37/bin"
+)
 
-#### `mlaunch_list`
-
-Returns structured JSON with node details.  Example:
-```json
-{
-  "nodes": [
-    {
-      "name": "rs0/primary",
-      "hostname": "localhost",
-      "port": 27017,
-      "role": "primary",
-      "status": "running"
-    }
-  ]
-}
+# Sharded cluster — MongoDB 8.0, 2 shards
+mlaunch_init(
+    topology="sharded",
+    sharded="2",
+    cluster_name="ss80",
+    name="ss80",
+    binarypath="/home/user/.local/m/versions/8.0.26/bin"
+)
 ```
 
-#### Other tools (`mlaunch_start`, `mlaunch_stop`, `mlaunch_restart`, `mlaunch_kill`)
+### `mlaunch_list`
 
-- **`cluster_name`**: (required) Identifies the cluster to operate on.
-- `tags`: Space-separated node tags to target (omit for all nodes).
-- `verbose`: Enable verbose output.
-- `mlaunch_kill` also accepts `signal` (e.g. `SIGTERM`, `SIGKILL`).
+Returns structured JSON with node details.  Example output:
+
+```
+PROCESS          PORT     STATUS     PID
+mongos           27017    running    12345
+config server    27024    running    12346
+shard01
+    mongod       27018    running    12347
+    mongod       27019    running    12348
+    mongod       27020    running    12349
+shard02
+    mongod       27021    running    12350
+    mongod       27022    running    12351
+    mongod       27023    running    12352
+```
+
+### Other tools
+
+- `mlaunch_start` / `mlaunch_stop` / `mlaunch_restart` — manage cluster lifecycle
+- `mlaunch_kill` — send signals (e.g. `SIGTERM`) to nodes
+- All accept `cluster_name` (required) and optional `tags` to target specific nodes
+
+## Install Checklist (New Machine)
+
+```bash
+# 1. Prerequisites
+npm install -g m                    # version manager
+pip install mtools                   # mlaunch
+pip install -e /path/to/mlaunch_mcp # this project
+
+# 2. Install MongoDB versions
+m 7.0.37
+m 8.0.26
+
+# 3. Register MCP server in OpenClaw config (~/.openclaw/openclaw.json)
+# → see "MCP Client Configuration" above
+
+# 4. Enable skill (copy skills/mlaunch-mcp/ to OpenClaw skills path)
+# → add to skills.entries in openclaw.json: "mlaunch-mcp": {"enabled": true}
+
+# 5. Restart gateway
+systemctl --user restart openclaw-gateway
+```
+
+## OpenClaw Skill
+
+The `skills/mlaunch-mcp/` directory contains an OpenClaw skill that teaches
+the AI agent how to use this MCP server with `m` for version management.
+
+```
+skills/mlaunch-mcp/
+├── SKILL.md           # Triggerable skill definition
+└── references/
+    └── man.md         # Full m command reference
+```
 
 ## Security
 
-The combined path `<base_dir>/<cluster_name>` is always resolved and
-validated against allowed base directories:
-
-- `~/data/`
-- `/tmp/`
-- `/var/tmp/`
-
+The combined path `<base_dir>/<cluster_name>` is resolved and validated
+against allowed base directories (`~/data/`, `/tmp/`, `/var/tmp/`).
 Path-traversal in `cluster_name` (e.g. `../escape`) is blocked.
 
 ## Development
 
 ```bash
-# Install dev dependencies
-uv pip install pytest pytest-asyncio
-
-# Run tests
-.venv/bin/python -m pytest tests/ -v
+pip install pytest pytest-asyncio
+pytest tests/ -v
 ```
 
 ## License
