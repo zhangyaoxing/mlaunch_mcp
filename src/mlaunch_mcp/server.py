@@ -201,6 +201,8 @@ async def mlaunch_init(
     elif topology == "replicaset":
         cmd_args.append("--replicaset")
     elif topology == "sharded":
+        # MongoDB 3.6+ requires shards to be replica sets
+        cmd_args.append("--replicaset")
         cmd_args.append("--sharded")
         if sharded:
             cmd_args.append(sharded)
