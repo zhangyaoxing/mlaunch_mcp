@@ -21,11 +21,12 @@ ALLOWED_BASE_DIRS = [
     Path.home() / "data",
     Path("/tmp"),
     Path("/var/tmp"),
-    Path("/data")
+    Path("/data"),
 ]
 
 # Global base directory, set via --dir at server startup.
 # Each cluster gets its own subdirectory under this base.
+# pylint: disable=invalid-name  # mutable global, not a constant
 _base_dir: str | None = None
 
 
@@ -51,9 +52,8 @@ def _resolve_base_dir(dir_arg: str) -> str:
 def _get_cluster_dir(cluster_name: str | None) -> str:
     """Return the absolute cluster directory for *cluster_name*.
 
-    Combines the server-level base dir with *cluster_name*.  If
-    *cluster_name* is ``None`` and no base dir was configured, raises
-    ``ValueError``.
+    Combines the server-level base dir with *cluster_name*.
+    Raises ``ValueError`` when neither is available.
     """
     if _base_dir is None:
         raise ValueError(
@@ -100,8 +100,14 @@ async def _run_mlaunch(
             timeout=timeout,
         )
 
-        stdout = stdout_bytes.decode("utf-8", errors="replace").strip() if stdout_bytes else ""
-        stderr = stderr_bytes.decode("utf-8", errors="replace").strip() if stderr_bytes else ""
+        stdout = (
+            stdout_bytes.decode("utf-8", errors="replace").strip()
+            if stdout_bytes else ""
+        )
+        stderr = (
+            stderr_bytes.decode("utf-8", errors="replace").strip()
+            if stderr_bytes else ""
+        )
 
         return {
             "success": proc.returncode == 0,
@@ -113,17 +119,20 @@ async def _run_mlaunch(
         return {
             "success": False,
             "stdout": "",
-            "stderr": f"Command timed out after {timeout}s: mlaunch {' '.join(args)}",
+            "stderr": (
+                f"Command timed out after {timeout}s: "
+                f"mlaunch {' '.join(args)}"
+            ),
             "returncode": -1,
         }
     except FileNotFoundError:
         return {
             "success": False,
             "stdout": "",
-            "stderr": "mlaunch not found. Please install mtools: pip install mtools",
+            "stderr": "mlaunch not found. Install mtools: pip install mtools",
             "returncode": -1,
         }
-    except Exception as e:
+    except (OSError, RuntimeError) as e:
         return {
             "success": False,
             "stdout": "",
@@ -136,9 +145,26 @@ async def _run_mlaunch(
 # MCP Tools
 # ---------------------------------------------------------------------------
 
+_ERR_FMT = (
+    "Failed to {action}.\n\n"
+    "STDERR:\n{stderr}\n\n"
+    "STDOUT:\n{stdout}"
+)
+
+
+def _format_result(action: str, result: dict[str, Any]) -> str:
+    """Format a subprocess result into a success or error string."""
+    if result["success"]:
+        return f"{action} successfully.\n\n{result['stdout']}"
+    return _ERR_FMT.format(
+        action=action.lower(),
+        stderr=result["stderr"],
+        stdout=result["stdout"],
+    )
+
 
 @mcp.tool()
-async def mlaunch_init(
+async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,too-many-branches,too-many-statements,too-many-positional-arguments
     topology: str = "single",
     cluster_name: str | None = None,
     nodes: int | None = None,
@@ -171,7 +197,7 @@ async def mlaunch_init(
         name: Replica set name.
         arbiter: Add an arbiter node to the replica set.
         priority: Enable priority-based elections in the replica set.
-        sharded: Shard definitions, e.g. '2' or '2/3' (2 shards, 3 replicas each).
+        sharded: Shard definitions, e.g. '2' or '2/3'.
         config: Number of config server nodes (sharded only, default: 1).
         csrs: Use a replica set for config servers (sharded only).
         mongos: Number of mongos routers (sharded only, default: 1).
@@ -195,19 +221,19 @@ async def mlaunch_init(
 
     cmd_args = ["init"]
 
-    # Topology flag
     if topology == "single":
         cmd_args.append("--single")
     elif topology == "replicaset":
         cmd_args.append("--replicaset")
     elif topology == "sharded":
-        # MongoDB 3.6+ requires shards to be replica sets
-        cmd_args.append("--replicaset")
         cmd_args.append("--sharded")
         if sharded:
             cmd_args.append(sharded)
     else:
-        return f"Error: Unknown topology '{topology}'. Must be 'single', 'replicaset', or 'sharded'."
+        return (
+            f"Error: Unknown topology '{topology}'. "
+            "Must be 'single', 'replicaset', or 'sharded'."
+        )
 
     # Replica set options
     if topology == "replicaset":
@@ -262,12 +288,11 @@ async def mlaunch_init(
             f"Directory: {cluster_dir}\n\n"
             f"{result['stdout']}"
         )
-    else:
-        return (
-            f"Failed to initialize cluster '{cluster_name}'.\n\n"
-            f"STDERR:\n{result['stderr']}\n\n"
-            f"STDOUT:\n{result['stdout']}"
-        )
+    return (
+        f"Failed to initialize cluster '{cluster_name}'.\n\n"
+        f"STDERR:\n{result['stderr']}\n\n"
+        f"STDOUT:\n{result['stdout']}"
+    )
 
 
 @mcp.tool()
@@ -279,9 +304,8 @@ async def mlaunch_start(
     """Start stopped nodes in an existing mlaunch cluster.
 
     Args:
-        cluster_name: Name of the cluster directory. Required unless the
-                      server was started with --dir and only one cluster exists.
-        tags: Space-separated node tags to start. If omitted, starts all stopped nodes.
+        cluster_name: Name of the cluster directory.
+        tags: Space-separated node tags to start. Omit for all stopped nodes.
         verbose: Enable verbose output.
     """
     try:
@@ -297,11 +321,7 @@ async def mlaunch_start(
         cmd_args.append("--verbose")
 
     result = await _run_mlaunch(cmd_args)
-
-    if result["success"]:
-        return f"Nodes started successfully.\n\n{result['stdout']}"
-    else:
-        return f"Failed to start nodes.\n\nSTDERR:\n{result['stderr']}\n\nSTDOUT:\n{result['stdout']}"
+    return _format_result("Nodes started", result)
 
 
 @mcp.tool()
@@ -314,7 +334,7 @@ async def mlaunch_stop(
 
     Args:
         cluster_name: Name of the cluster directory.
-        tags: Space-separated node tags to stop. If omitted, stops all nodes.
+        tags: Space-separated node tags to stop. Omit for all nodes.
         verbose: Enable verbose output.
     """
     try:
@@ -330,11 +350,7 @@ async def mlaunch_stop(
         cmd_args.append("--verbose")
 
     result = await _run_mlaunch(cmd_args)
-
-    if result["success"]:
-        return f"Nodes stopped successfully.\n\n{result['stdout']}"
-    else:
-        return f"Failed to stop nodes.\n\nSTDERR:\n{result['stderr']}\n\nSTDOUT:\n{result['stdout']}"
+    return _format_result("Nodes stopped", result)
 
 
 @mcp.tool()
@@ -347,7 +363,7 @@ async def mlaunch_restart(
 
     Args:
         cluster_name: Name of the cluster directory.
-        tags: Space-separated node tags to restart. If omitted, restarts all nodes.
+        tags: Space-separated node tags to restart. Omit for all nodes.
         verbose: Enable verbose output.
     """
     try:
@@ -363,11 +379,7 @@ async def mlaunch_restart(
         cmd_args.append("--verbose")
 
     result = await _run_mlaunch(cmd_args)
-
-    if result["success"]:
-        return f"Nodes restarted successfully.\n\n{result['stdout']}"
-    else:
-        return f"Failed to restart nodes.\n\nSTDERR:\n{result['stderr']}\n\nSTDOUT:\n{result['stdout']}"
+    return _format_result("Nodes restarted", result)
 
 
 @mcp.tool()
@@ -375,10 +387,9 @@ async def mlaunch_list(
     cluster_name: str | None = None,
     verbose: bool = False,
 ) -> str:
-    """List all nodes in an mlaunch cluster with their status and connection info.
+    """List all nodes in an mlaunch cluster with status and connection info.
 
-    Returns structured JSON output with node details including hostname, port,
-    status, and role for each node.
+    Returns structured JSON with hostname, port, status, and role per node.
 
     Args:
         cluster_name: Name of the cluster directory.
@@ -401,8 +412,7 @@ async def mlaunch_list(
             return json.dumps(data, indent=2)
         except json.JSONDecodeError:
             return result["stdout"]
-    else:
-        return f"Failed to list nodes.\n\nSTDERR:\n{result['stderr']}\n\nSTDOUT:\n{result['stdout']}"
+    return _format_result("Nodes listed", result)
 
 
 @mcp.tool()
@@ -416,8 +426,8 @@ async def mlaunch_kill(
 
     Args:
         cluster_name: Name of the cluster directory.
-        tags: Space-separated node tags to target. If omitted, targets all nodes.
-        signal: Signal to send (e.g., SIGTERM, SIGKILL, SIGINT). Default: SIGTERM.
+        tags: Space-separated node tags to target. Omit for all nodes.
+        signal: Signal to send (e.g., SIGTERM, SIGKILL, SIGINT).
         verbose: Enable verbose output.
     """
     try:
@@ -435,11 +445,7 @@ async def mlaunch_kill(
         cmd_args.append("--verbose")
 
     result = await _run_mlaunch(cmd_args)
-
-    if result["success"]:
-        return f"Signal sent successfully.\n\n{result['stdout']}"
-    else:
-        return f"Failed to send signal.\n\nSTDERR:\n{result['stderr']}\n\nSTDOUT:\n{result['stdout']}"
+    return _format_result("Signal sent", result)
 
 
 # ---------------------------------------------------------------------------
@@ -454,6 +460,7 @@ def main() -> None:
     subdirectory of this base, named by the cluster_name tool parameter
     (random if omitted).
     """
+    # pylint: disable=global-statement  # module-level state is intentional
     global _base_dir
 
     parser = argparse.ArgumentParser(add_help=False)
