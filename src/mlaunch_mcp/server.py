@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import secrets
 import shlex
 import sys
+import time
 from pathlib import Path
 from typing import Any
 
@@ -138,6 +140,97 @@ async def _run_mlaunch(
             "stdout": "",
             "stderr": f"Unexpected error: {e}",
             "returncode": -1,
+        }
+
+
+def _run_mlaunch_detached(  # pylint: disable=too-many-locals
+    args: list[str],
+    output_dir: str,
+    timeout: int = DEFAULT_TIMEOUT,
+) -> dict[str, Any]:
+    """Run mlaunch via double-fork so it survives parent process death.
+
+    Uses the classic double-fork daemonization pattern: the grandchild
+    process is reparented to init (PID 1) and lives in its own session,
+    completely detached from the MCP server process tree.  This prevents
+    process managers (including OpenClaw) from killing mlaunch/mongod
+    when they walk the parent process tree.
+
+    stdout and stderr are captured to files under *output_dir* and read
+    back after the process completes.
+    """
+    out_file = os.path.join(output_dir, "mlaunch.stdout")
+    err_file = os.path.join(output_dir, "mlaunch.stderr")
+    pid_file = os.path.join(output_dir, "mlaunch.pid")
+
+    pid = os.fork()
+    if pid == 0:
+        # ---- first child ----
+        os.setsid()               # new session, detach from terminal
+        pid2 = os.fork()
+        if pid2 == 0:
+            # ---- grandchild (daemon) ----
+            # Write PID file so parent can track us.
+            with open(pid_file, "w", encoding="utf-8") as pf:
+                pf.write(str(os.getpid()))
+            # Run mlaunch, redirecting stdio to files.
+            with open(out_file, "w", encoding="utf-8") as out, \
+                 open(err_file, "w", encoding="utf-8") as err:
+                os.dup2(out.fileno(), 1)
+                os.dup2(err.fileno(), 2)
+                try:
+                    os.execvp("mlaunch", ["mlaunch"] + args)
+                except Exception:  # pylint: disable=broad-exception-caught
+                    pass
+            os._exit(1)
+        else:
+            # first child exits → grandchild reparented to init
+            os._exit(0)
+    else:
+        # ---- parent (MCP server) ----
+        os.waitpid(pid, 0)  # reap first child
+
+        # Read grandchild PID from the file it wrote.
+        deadline = time.monotonic() + timeout
+        child_pid: int | None = None
+        while time.monotonic() < deadline and child_pid is None:
+            try:
+                with open(pid_file, encoding="utf-8") as pf:
+                    child_pid = int(pf.read().strip())
+            except (FileNotFoundError, ValueError):
+                time.sleep(0.2)
+
+        if child_pid is None:
+            return {
+                "success": False,
+                "stdout": "",
+                "stderr": "Timed out waiting for mlaunch to start.",
+                "returncode": -1,
+            }
+
+        # Wait for grandchild to exit (poll /proc)
+        while time.monotonic() < deadline:
+            if not os.path.isdir(f"/proc/{child_pid}"):
+                break
+            time.sleep(0.5)
+
+        # Read captured output
+        try:
+            with open(out_file, encoding="utf-8") as f:
+                stdout = f.read().strip()
+        except FileNotFoundError:
+            stdout = ""
+        try:
+            with open(err_file, encoding="utf-8") as f:
+                stderr = f.read().strip()
+        except FileNotFoundError:
+            stderr = ""
+
+        return {
+            "success": "Error" not in stdout and "error" not in stdout.lower(),
+            "stdout": stdout,
+            "stderr": stderr,
+            "returncode": -1 if not stdout else 0,
         }
 
 
@@ -277,10 +370,14 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
 
     cmd_args.extend(["--dir", cluster_dir])
 
+    # Ensure the directory exists for output file capture
+    os.makedirs(cluster_dir, exist_ok=True)
+
     if verbose:
         cmd_args.append("--verbose")
 
-    result = await _run_mlaunch(cmd_args, timeout=DEFAULT_TIMEOUT)
+    # Use double-fork to ensure the cluster survives parent process death
+    result = _run_mlaunch_detached(cmd_args, cluster_dir, timeout=DEFAULT_TIMEOUT)
 
     if result["success"]:
         return (
