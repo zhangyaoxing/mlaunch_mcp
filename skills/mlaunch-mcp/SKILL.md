@@ -21,13 +21,22 @@ Returns a JSON array like:
 [
   {"name": "8.0.26", "path": "$HOME/.local/m/versions/8.0.26/bin/"},
   {"name": "7.0.37", "path": "$HOME/.local/m/versions/7.0.37/bin/"},
-  {"name": "6.0.29", "path": "$HOME/.local/m/versions/6.0.29/bin/"}
+  {"name": "6.0.20", "path": "$HOME/.local/m/versions/6.0.20/bin/"}
 ]
 ```
 
 The `path` value is exactly what `binarypath` needs.
 
-### 2. Create a cluster
+### 2. Install a version (if not already installed)
+
+Non-interactive install (use `M_CONFIRM=0` to skip prompt):
+
+```bash
+M_CONFIRM=0 m 8.0.26        # specific version
+M_CONFIRM=0 m 7.0           # latest in 7.0 series
+```
+
+### 3. Create a cluster
 
 **Replica set (3 nodes, default):**
 
@@ -38,6 +47,20 @@ mlaunch__mlaunch_init(
     binarypath="<m path>"
 )
 ```
+
+**Replica set with auth and custom node count:**
+
+```
+mlaunch__mlaunch_init(
+    topology="replicaset",
+    name="rs_60",
+    nodes=5,
+    auth=True,
+    binarypath="<m path>"
+)
+```
+
+Default auth credentials: `user` / `password`.
 
 **Sharded cluster (2 shards, each a 3-node replica set):**
 
@@ -50,7 +73,7 @@ mlaunch__mlaunch_init(
 )
 ```
 
-### 3. Manage clusters
+### 4. Manage clusters
 
 ```bash
 mlaunch list --dir <cluster_dir>   # list nodes & status
@@ -59,7 +82,7 @@ mlaunch start --dir <cluster_dir>   # start stopped nodes
 mlaunch restart --dir <cluster_dir> # restart nodes
 ```
 
-### 4. Clean up
+### 5. Clean up
 
 ```bash
 mlaunch stop --dir <cluster_dir>
@@ -74,11 +97,12 @@ m rm <version>
 
 ## Conventions
 
-- Cluster directories live under the server's `--dir` (default: `/data/Workspace/mongodb/`)
+- Cluster directories live under the server's `--dir`
 - Cluster name doubles as directory name for discoverability
 - MCP server must be restarted after code changes to pick up new logic
 - `binarypath` is the **directory** containing `mongod`/`mongos`, not the binary itself
+- `m` prompts for install confirmation by default (`CONFIRM=1`); use `M_CONFIRM=0` env var to skip in non-interactive/scripted use
 
 ## References
 
-See `man/TOOLS.md` for `m` command reference.
+See `references/man.md` for full `m` command reference.
