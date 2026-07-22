@@ -8,6 +8,7 @@ import json
 import os
 import secrets
 import shlex
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -148,90 +149,87 @@ def _run_mlaunch_detached(  # pylint: disable=too-many-locals
     output_dir: str,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> dict[str, Any]:
-    """Run mlaunch via double-fork so it survives parent process death.
+    """Run mlaunch fully detached via setsid + nohup.
 
-    Uses the classic double-fork daemonization pattern: the grandchild
-    process is reparented to init (PID 1) and lives in its own session,
-    completely detached from the MCP server process tree.  This prevents
-    process managers (including OpenClaw) from killing mlaunch/mongod
-    when they walk the parent process tree.
+    Launches mlaunch in its own session (setsid), immune to SIGHUP
+    (nohup), and backgrounded (&).  The intermediate shell exits
+    immediately, so mlaunch is reparented to init and invisible to
+    parent-process-tree walkers like OpenClaw.
 
-    stdout and stderr are captured to files under *output_dir* and read
-    back after the process completes.
+    Output is captured to files under *output_dir* and read back
+    after the process completes.
     """
     out_file = os.path.join(output_dir, "mlaunch.stdout")
     err_file = os.path.join(output_dir, "mlaunch.stderr")
     pid_file = os.path.join(output_dir, "mlaunch.pid")
 
-    pid = os.fork()
-    if pid == 0:
-        # ---- first child ----
-        os.setsid()               # new session, detach from terminal
-        pid2 = os.fork()
-        if pid2 == 0:
-            # ---- grandchild (daemon) ----
-            # Write PID file so parent can track us.
-            with open(pid_file, "w", encoding="utf-8") as pf:
-                pf.write(str(os.getpid()))
-            # Run mlaunch, redirecting stdio to files.
-            with open(out_file, "w", encoding="utf-8") as out, \
-                 open(err_file, "w", encoding="utf-8") as err:
-                os.dup2(out.fileno(), 1)
-                os.dup2(err.fileno(), 2)
-                try:
-                    os.execvp("mlaunch", ["mlaunch"] + args)
-                except Exception:  # pylint: disable=broad-exception-caught
-                    pass
-            os._exit(1)
-        else:
-            # first child exits → grandchild reparented to init
-            os._exit(0)
-    else:
-        # ---- parent (MCP server) ----
-        os.waitpid(pid, 0)  # reap first child
+    # Build a single-quoted shell script: setsid runs a new session,
+    # nohup backgrounds mlaunch, PID is echoed for tracking.
+    qargs = " ".join(shlex.quote(a) for a in ["mlaunch"] + args)
+    script = (
+        f"setsid bash -c '"
+        f"nohup {qargs} </dev/null"
+        f" >{shlex.quote(out_file)}"
+        f" 2>{shlex.quote(err_file)}"
+        f" & echo $!'"
+    )
 
-        # Read grandchild PID from the file it wrote.
-        deadline = time.monotonic() + timeout
-        child_pid: int | None = None
-        while time.monotonic() < deadline and child_pid is None:
-            try:
-                with open(pid_file, encoding="utf-8") as pf:
-                    child_pid = int(pf.read().strip())
-            except (FileNotFoundError, ValueError):
-                time.sleep(0.2)
-
-        if child_pid is None:
-            return {
-                "success": False,
-                "stdout": "",
-                "stderr": "Timed out waiting for mlaunch to start.",
-                "returncode": -1,
-            }
-
-        # Wait for grandchild to exit (poll /proc)
-        while time.monotonic() < deadline:
-            if not os.path.isdir(f"/proc/{child_pid}"):
-                break
-            time.sleep(0.5)
-
-        # Read captured output
-        try:
-            with open(out_file, encoding="utf-8") as f:
-                stdout = f.read().strip()
-        except FileNotFoundError:
-            stdout = ""
-        try:
-            with open(err_file, encoding="utf-8") as f:
-                stderr = f.read().strip()
-        except FileNotFoundError:
-            stderr = ""
-
+    try:
+        proc = subprocess.run(
+            ["bash", "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+    except subprocess.TimeoutExpired:
         return {
-            "success": "Error" not in stdout and "error" not in stdout.lower(),
-            "stdout": stdout,
-            "stderr": stderr,
-            "returncode": -1 if not stdout else 0,
+            "success": False, "stdout": "",
+            "stderr": "Timed out launching mlaunch.", "returncode": -1,
         }
+
+    pid_str = proc.stdout.strip()
+    if not pid_str or proc.returncode != 0:
+        return {
+            "success": False, "stdout": "",
+            "stderr": (
+                f"Failed to launch mlaunch.\n"
+                f"STDERR: {proc.stderr}\nSTDOUT: {proc.stdout}"
+            ),
+            "returncode": proc.returncode,
+        }
+
+    child_pid = int(pid_str)
+
+    # Write PID for diagnostics.
+    with open(pid_file, "w", encoding="utf-8") as pf:
+        pf.write(str(child_pid))
+
+    # Wait for the detached process to finish (poll /proc).
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not os.path.isdir(f"/proc/{child_pid}"):
+            break
+        time.sleep(0.5)
+
+    # Read captured output.
+    try:
+        with open(out_file, encoding="utf-8") as f:
+            stdout = f.read().strip()
+    except FileNotFoundError:
+        stdout = ""
+    try:
+        with open(err_file, encoding="utf-8") as f:
+            stderr = f.read().strip()
+    except FileNotFoundError:
+        stderr = ""
+
+    return {
+        "success": "Error" not in stdout and "error" not in stdout.lower(),
+        "stdout": stdout,
+        "stderr": stderr,
+        "returncode": -1 if not stdout else 0,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -316,9 +314,21 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
 
     if topology == "single":
         cmd_args.append("--single")
+        # single + sharded: each shard is a single-node replica set
+        if sharded:
+            cmd_args.append("--sharded")
+            cmd_args.append(sharded)
     elif topology == "replicaset":
         cmd_args.append("--replicaset")
+        if sharded:
+            cmd_args.append("--sharded")
+            cmd_args.append(sharded)
     elif topology == "sharded":
+        # Sharded clusters require a base topology (replicaset is the norm)
+        if sharded == "1":
+            cmd_args.append("--single")
+        else:
+            cmd_args.append("--replicaset")
         cmd_args.append("--sharded")
         if sharded:
             cmd_args.append(sharded)
@@ -328,8 +338,8 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
             "Must be 'single', 'replicaset', or 'sharded'."
         )
 
-    # Replica set options
-    if topology == "replicaset":
+    # Replica set options (apply to both replicaset and sharded topologies)
+    if topology in ("replicaset", "sharded"):
         if nodes is not None:
             cmd_args.extend(["--nodes", str(nodes)])
         if arbiter:
@@ -339,8 +349,8 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
         if priority:
             cmd_args.append("--priority")
 
-    # Sharded options
-    if topology == "sharded":
+    # Sharded-specific options
+    if topology in ("sharded", "single") and sharded:
         if config is not None:
             cmd_args.extend(["--config", str(config)])
         if csrs:
