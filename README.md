@@ -11,7 +11,7 @@ MCP (Model Context Protocol) server for [mtools/mlaunch](https://github.com/ruec
 ## Installation
 
 ```bash
-git clone https://github.com/<your-repo>/mlaunch-mcp.git
+git clone git@github.com:zhangyaoxing/mlaunch_mcp.git
 cd mlaunch_mcp
 pip install -e .
 ```
