@@ -5,12 +5,9 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-import os
 import secrets
 import shlex
-import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
@@ -142,94 +139,6 @@ async def _run_mlaunch(
             "stderr": f"Unexpected error: {e}",
             "returncode": -1,
         }
-
-
-def _run_mlaunch_detached(  # pylint: disable=too-many-locals
-    args: list[str],
-    output_dir: str,
-    timeout: int = DEFAULT_TIMEOUT,
-) -> dict[str, Any]:
-    """Run mlaunch fully detached via setsid + nohup.
-
-    Launches mlaunch in its own session (setsid), immune to SIGHUP
-    (nohup), and backgrounded (&).  The intermediate shell exits
-    immediately, so mlaunch is reparented to init and invisible to
-    parent-process-tree walkers like OpenClaw.
-
-    Output is captured to files under *output_dir* and read back
-    after the process completes.
-    """
-    out_file = os.path.join(output_dir, "mlaunch.stdout")
-    err_file = os.path.join(output_dir, "mlaunch.stderr")
-    pid_file = os.path.join(output_dir, "mlaunch.pid")
-
-    # Build a single-quoted shell script: setsid runs a new session,
-    # nohup backgrounds mlaunch, PID is echoed for tracking.
-    qargs = " ".join(shlex.quote(a) for a in ["mlaunch"] + args)
-    script = (
-        f"setsid bash -c '"
-        f"nohup {qargs} </dev/null"
-        f" >{shlex.quote(out_file)}"
-        f" 2>{shlex.quote(err_file)}"
-        f" & echo $!'"
-    )
-
-    try:
-        proc = subprocess.run(
-            ["bash", "-c", script],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return {
-            "success": False, "stdout": "",
-            "stderr": "Timed out launching mlaunch.", "returncode": -1,
-        }
-
-    pid_str = proc.stdout.strip()
-    if not pid_str or proc.returncode != 0:
-        return {
-            "success": False, "stdout": "",
-            "stderr": (
-                f"Failed to launch mlaunch.\n"
-                f"STDERR: {proc.stderr}\nSTDOUT: {proc.stdout}"
-            ),
-            "returncode": proc.returncode,
-        }
-
-    child_pid = int(pid_str)
-
-    # Write PID for diagnostics.
-    with open(pid_file, "w", encoding="utf-8") as pf:
-        pf.write(str(child_pid))
-
-    # Wait for the detached process to finish (poll /proc).
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if not os.path.isdir(f"/proc/{child_pid}"):
-            break
-        time.sleep(0.5)
-
-    # Read captured output.
-    try:
-        with open(out_file, encoding="utf-8") as f:
-            stdout = f.read().strip()
-    except FileNotFoundError:
-        stdout = ""
-    try:
-        with open(err_file, encoding="utf-8") as f:
-            stderr = f.read().strip()
-    except FileNotFoundError:
-        stderr = ""
-
-    return {
-        "success": "Error" not in stdout and "error" not in stdout.lower(),
-        "stdout": stdout,
-        "stderr": stderr,
-        "returncode": -1 if not stdout else 0,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -380,14 +289,10 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
 
     cmd_args.extend(["--dir", cluster_dir])
 
-    # Ensure the directory exists for output file capture
-    os.makedirs(cluster_dir, exist_ok=True)
-
     if verbose:
         cmd_args.append("--verbose")
 
-    # Use double-fork to ensure the cluster survives parent process death
-    result = _run_mlaunch_detached(cmd_args, cluster_dir, timeout=DEFAULT_TIMEOUT)
+    result = await _run_mlaunch(cmd_args, timeout=DEFAULT_TIMEOUT)
 
     if result["success"]:
         return (
