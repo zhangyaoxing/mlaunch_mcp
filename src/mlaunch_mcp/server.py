@@ -196,7 +196,8 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
     hostname: str | None = None,
     verbose: bool = False,
 ) -> str:
-    """Create and start a new MongoDB cluster (single, replica set, or sharded).
+    """Create and start a new MongoDB cluster (single, replica set, or sharded) 
+    for testing purposes. Do not use for production workloads.
 
     The cluster data is stored under <base_dir>/<cluster_name>.  A random
     cluster_name is generated when none is provided.
