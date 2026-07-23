@@ -9,48 +9,19 @@ via [mtools/mlaunch](https://github.com/rueckstiess/mtools).
 
 ```bash
 # 1. Prerequisites
-npm install -g m                       # MongoDB version manager
-pip install mtools                      # mlaunch CLI
+pip install mtools                      # mlaunch CLI (includes MongoDB version management)
 
-# 2. Install MongoDB versions
-m 7.0.37
-m 8.0.26
-
-# 3. Install this project
+# 2. Install this project
 git clone git@github.com:zhangyaoxing/mlaunch_mcp.git
 cd mlaunch_mcp
-make venv
+pip install .
 ```
 
 ## Requirements
 
 - Python 3.10+
 - [mtools](https://github.com/rueckstiess/mtools) (`pip install mtools`)
-- MongoDB binaries — managed via [`m`](https://github.com/aheckmann/m) or in PATH
-
-## MongoDB Version Management with `m`
-
-[`m`](https://github.com/aheckmann/m) is a MongoDB version manager (like nvm
-for Node).  It installs multiple MongoDB versions side-by-side and provides
-the `--binarypath` that mlaunch needs.
-
-```bash
-npm install -g m
-
-m 8.0.26                       # install a specific version
-m 7.0                          # latest in 7.0 series
-
-m installed --json             # list installed versions with paths
-# → [{"name":"8.0.26","path":"$HOME/.local/m/versions/8.0.26/bin/"}, ...]
-
-m bin 8.0.26                   # print binary path for a version
-```
-
-Non-interactive install (skip confirmation prompt):
-
-```bash
-M_CONFIRM=0 m 8.0.26
-```
+- MongoDB binaries in PATH (mlaunch handles download & installation automatically)
 
 ## Configuration
 
@@ -101,10 +72,10 @@ systemctl --user restart openclaw-gateway
 
 ## CLI Usage
 
-This project wraps mlaunch;  the underlying CLI is always available directly:
+This project wraps mlaunch; the underlying CLI is always available directly:
 
 ```bash
-mlaunch init --replicaset --nodes 3 --port 27017 --binarypath $(m bin 7.0.37) --dir /data/Workspace/mongodb/rs70
+mlaunch init --replicaset --nodes 3 --port 27017 --dir /data/Workspace/mongodb/rs70
 mlaunch list --dir /data/Workspace/mongodb/rs70 --json
 mlaunch stop  --dir /data/Workspace/mongodb/rs70
 mlaunch start --dir /data/Workspace/mongodb/rs70
@@ -146,24 +117,23 @@ target specific nodes.
 | `username` | string | Auth username |
 | `password` | string | Auth password |
 | `port` | int | Base port number |
-| `binarypath` | string | Path to MongoDB binaries (`m bin <version>`) |
+| `binarypath` | string | Path to MongoDB binaries |
 | `hostname` | string | Bind hostname (default: localhost) |
 | `verbose` | bool | Verbose output |
 
 ### Examples
 
-**Replica set — 3 nodes, MongoDB 7.0:**
+**Replica set — 3 nodes:**
 
 ```python
 mlaunch_init(
     topology="replicaset",
     cluster_name="rs70",
-    name="rs70",
-    binarypath="/home/user/.local/m/versions/7.0.37/bin"
+    name="rs70"
 )
 ```
 
-**Sharded cluster — 2 shards, 3 nodes each, csrs, auth:**
+**Sharded cluster — 2 shards, 3 nodes each, csrs:**
 
 ```python
 mlaunch_init(
@@ -171,8 +141,7 @@ mlaunch_init(
     sharded="2",
     nodes=3,
     csrs=True,
-    cluster_name="ss80",
-    binarypath="/home/user/.local/m/versions/8.0.26/bin"
+    cluster_name="ss80"
 )
 ```
 
@@ -183,8 +152,7 @@ mlaunch_init(
     topology="replicaset",
     cluster_name="rs_auth",
     auth=True,
-    port=35000,
-    binarypath="/home/user/.local/m/versions/7.0.37/bin"
+    port=35000
 )
 ```
 
@@ -205,7 +173,7 @@ mlaunch_init(
 ## OpenClaw Skill
 
 The `skills/mlaunch-mcp/` directory contains an OpenClaw skill that teaches
-the AI agent how to use this MCP server with `m` for version management.
+the AI agent how to use this MCP server.
 
 ```
 skills/mlaunch-mcp/
