@@ -471,9 +471,13 @@ async def mlaunch_list(
             else:
                 return stdout
 
-        # Restructure flat array into nested role-based groups
+        # Restructure flat array into nested role-based groups.
+        # mlaunch may include None or non-dict items (e.g. separator strings)
+        # in the JSON array — skip those.
         grouped: dict[str, Any] = {"mongos": [], "config": [], "shards": {}}
         for node in data:
+            if not isinstance(node, dict):
+                continue
             role = node.get("role", "")
             if role == "mongos":
                 grouped["mongos"].append(node)
