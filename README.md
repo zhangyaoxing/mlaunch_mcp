@@ -9,7 +9,8 @@ via [mtools/mlaunch](https://github.com/rueckstiess/mtools).
 
 ```bash
 # 1. Prerequisites
-pip install mtools                      # mlaunch CLI (includes MongoDB version management)
+npm install -g m                        # MongoDB version manager
+pip install mtools                      # mlaunch CLI
 
 # 2. Install this project
 git clone git@github.com:zhangyaoxing/mlaunch_mcp.git
@@ -20,8 +21,8 @@ pip install .
 ## Requirements
 
 - Python 3.10+
+- [`m`](https://github.com/aheckmann/m) — MongoDB version manager (`npm install -g m`)
 - [mtools](https://github.com/rueckstiess/mtools) (`pip install mtools`)
-- MongoDB binaries in PATH (mlaunch handles download & installation automatically)
 
 ## Configuration
 
