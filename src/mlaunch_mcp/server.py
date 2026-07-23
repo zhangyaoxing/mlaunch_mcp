@@ -195,12 +195,15 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
     binarypath: str | None = None,
     hostname: str | None = None,
     verbose: bool = False,
+    force: bool = False,
 ) -> str:
     """Create and start a new MongoDB cluster (single, replica set, or sharded) 
     for testing purposes. Do not use for production workloads.
 
-    The cluster data is stored under <base_dir>/<cluster_name>.  A random
-    cluster_name is generated when none is provided.
+    The cluster data is stored under ``<base_dir>/<cluster_name>``, where
+    ``<base_dir>`` is the ``--dir`` value the server was started with
+    (e.g. ``/data/Workspace/mongodb``).  A random ``cluster_name`` is
+    generated when none is provided.
 
     Args:
         topology: Cluster topology - 'single', 'replicaset', or 'sharded'.
@@ -231,6 +234,8 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
             NOT the binary itself.
         hostname: Hostname to bind to (default: localhost).
         verbose: Enable verbose output.
+        force: If True, remove the existing cluster directory before init.
+            Use to rebuild a cluster without manual cleanup.
     """
     if cluster_name is None:
         cluster_name = _random_cluster_name()
@@ -239,6 +244,10 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
         cluster_dir = _get_cluster_dir(cluster_name)
     except ValueError as e:
         return str(e)
+
+    if force:
+        import shutil
+        shutil.rmtree(cluster_dir, ignore_errors=True)
 
     cmd_args = ["init"]
 
@@ -418,7 +427,18 @@ async def mlaunch_list(
 ) -> str:
     """List all nodes in an mlaunch cluster with status and connection info.
 
-    Returns structured JSON with hostname, port, status, and role per node.
+    Returns structured JSON grouped by role:
+
+    .. code-block:: json
+
+        {
+          "mongos": [ ... ],
+          "config": [ ... ],
+          "shards": {
+            "shard01": [ ... ],
+            "shard02": [ ... ]
+          }
+        }
 
     Args:
         cluster_name: Name of the cluster directory.
@@ -436,24 +456,34 @@ async def mlaunch_list(
     result = await _run_mlaunch(cmd_args, cwd=cluster_dir)
 
     if result["success"]:
-        # mlaunch list --json may prepend a version line like
-        # "Detected mongod version: 7.0.36\n" before the JSON array.
-        # Strip any non-JSON prefix lines before parsing.
         stdout = result["stdout"]
         try:
             data = json.loads(stdout)
-            return json.dumps(data, indent=2)
         except json.JSONDecodeError:
-            # Try to find JSON array on a later line
             for line in stdout.splitlines():
                 stripped = line.strip()
                 if stripped.startswith("["):
                     try:
                         data = json.loads(stripped)
-                        return json.dumps(data, indent=2)
+                        break
                     except json.JSONDecodeError:
                         pass
-            return stdout
+            else:
+                return stdout
+
+        # Restructure flat array into nested role-based groups
+        grouped: dict[str, Any] = {"mongos": [], "config": [], "shards": {}}
+        for node in data:
+            role = node.get("role", "")
+            if role == "mongos":
+                grouped["mongos"].append(node)
+            elif role == "configserver":
+                grouped["config"].append(node)
+            elif role == "shardsvr":
+                shard = node.get("shard", "unknown")
+                grouped["shards"].setdefault(shard, []).append(node)
+
+        return json.dumps(grouped, indent=2)
     return _format_result("Nodes listed", result)
 
 

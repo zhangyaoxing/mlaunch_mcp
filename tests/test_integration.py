@@ -56,11 +56,20 @@ def _assert_ok(result: str) -> None:
     assert ok, f"Expected success, got: {result[:500]}"
 
 
-def _assert_json(result: str) -> list:
-    """Assert *result* is valid JSON list and return it."""
+def _assert_json(result: str) -> dict:
+    """Assert *result* is valid JSON dict (nested role groups) and return it."""
     data = json.loads(result)
-    assert isinstance(data, list)
+    assert isinstance(data, dict)
+    assert "mongos" in data or "shards" in data or "config" in data
     return data
+
+
+def _flat_nodes(data: dict) -> list:
+    """Flatten the nested mlaunch_list output to a list of all nodes."""
+    nodes = list(data.get("mongos", [])) + list(data.get("config", []))
+    for shard_nodes in data.get("shards", {}).values():
+        nodes.extend(shard_nodes)
+    return nodes
 
 
 def _assert_fail(result: str) -> None:
@@ -449,7 +458,8 @@ class TestLifecycle:
         _assert_ok(r)
 
         # 2. List — all running
-        nodes = _assert_json(await mlaunch_list(cluster_name="lc"))
+        data = _assert_json(await mlaunch_list(cluster_name="lc"))
+        nodes = _flat_nodes(data)
         assert len(nodes) >= 1
         assert all(n["status"] == "running" for n in nodes), str(nodes)
 
@@ -459,7 +469,8 @@ class TestLifecycle:
         # 4. List after stop
         after_stop = await mlaunch_list(cluster_name="lc")
         if after_stop.strip():
-            ns = json.loads(after_stop)
+            as_data = json.loads(after_stop)
+            ns = _flat_nodes(as_data)
             if ns:
                 assert all(n.get("status") != "running" for n in ns), str(ns)
 
@@ -467,14 +478,16 @@ class TestLifecycle:
         _assert_ok(await mlaunch_start(cluster_name="lc"))
 
         # 6. List after start — running again
-        nodes3 = _assert_json(await mlaunch_list(cluster_name="lc"))
+        data3 = _assert_json(await mlaunch_list(cluster_name="lc"))
+        nodes3 = _flat_nodes(data3)
         assert all(n["status"] == "running" for n in nodes3), str(nodes3)
 
         # 7. Restart
         _assert_ok(await mlaunch_restart(cluster_name="lc"))
 
         # 8. List after restart
-        nodes4 = _assert_json(await mlaunch_list(cluster_name="lc"))
+        data4 = _assert_json(await mlaunch_list(cluster_name="lc"))
+        nodes4 = _flat_nodes(data4)
         assert all(n["status"] == "running" for n in nodes4), str(nodes4)
 
         # 9. Kill SIGTERM
