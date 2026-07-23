@@ -247,6 +247,8 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
 
     if force:
         import shutil
+        # Stop any running nodes first so rmtree can clean up fully.
+        await _run_mlaunch(["stop"], cwd=cluster_dir)
         shutil.rmtree(cluster_dir, ignore_errors=True)
 
     cmd_args = ["init"]
