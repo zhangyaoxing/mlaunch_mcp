@@ -204,12 +204,19 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
     Args:
         topology: Cluster topology - 'single', 'replicaset', or 'sharded'.
         cluster_name: Name for the new cluster directory. Random if omitted.
-        nodes: Number of data nodes in a replica set (default: 3).
+        nodes: Number of data nodes per replica set (default: 3).
+            For sharded topologies this is per-shard node count.  Combine
+            with ``sharded``, e.g. ``sharded='2', nodes=3`` = 2 shards × 3.
         name: Replica set name.
         arbiter: Add an arbiter node to the replica set.
         priority: Enable priority-based elections in the replica set.
-        sharded: Number of shards, e.g. '2'. Node count per shard via nodes.
-        config: Number of config server nodes (sharded only, default: 1).
+        sharded: Number of shards as a string, e.g. ``'2'`` or ``'3'``.
+            Each shard is a replica set whose node count is controlled by
+            the ``nodes`` parameter.  Do NOT use ``'2/3'`` — mlaunch
+            interprets the slash as part of the replica set name.
+        config: Number of config server nodes, sharded only (default: 1).
+            When ``csrs=True``, a config server replica set of 3 nodes is
+            recommended for production-like setups.
         csrs: Use a replica set for config servers (sharded only).
         mongos: Number of mongos routers (sharded only, default: 1).
         auth: Enable authentication.
@@ -218,7 +225,9 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
         auth_db: Authentication database (default: admin).
         auth_roles: Additional roles for the user (space-separated).
         port: Base port number for mongod/mongos instances.
-        binarypath: Path to MongoDB binaries.
+        binarypath: Directory containing mongod/mongos binaries,
+            e.g. ``/path/to/8.0.26/bin/``.  Must be the bin directory,
+            NOT the binary itself.
         hostname: Hostname to bind to (default: localhost).
         verbose: Enable verbose output.
     """
