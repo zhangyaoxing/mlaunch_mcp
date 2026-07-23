@@ -244,14 +244,15 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
             cmd_args.append("--sharded")
             cmd_args.append(sharded)
     elif topology == "sharded":
-        # Sharded clusters require a base topology (replicaset is the norm)
-        if sharded == "1":
-            cmd_args.append("--single")
-        else:
-            cmd_args.append("--replicaset")
+        if not sharded:
+            return (
+                "Error: 'sharded' parameter is required when topology='sharded'. "
+                "Examples: sharded='2' (2 shards) or sharded='2/3' (2 shards × 3 nodes)."
+            )
+        # MongoDB 3.6+ requires shards to be replica sets.
+        cmd_args.append("--replicaset")
         cmd_args.append("--sharded")
-        if sharded:
-            cmd_args.append(sharded)
+        cmd_args.append(sharded)
     else:
         return (
             f"Error: Unknown topology '{topology}'. "
@@ -425,11 +426,24 @@ async def mlaunch_list(
     result = await _run_mlaunch(cmd_args, cwd=cluster_dir)
 
     if result["success"]:
+        # mlaunch list --json may prepend a version line like
+        # "Detected mongod version: 7.0.36\n" before the JSON array.
+        # Strip any non-JSON prefix lines before parsing.
+        stdout = result["stdout"]
         try:
-            data = json.loads(result["stdout"])
+            data = json.loads(stdout)
             return json.dumps(data, indent=2)
         except json.JSONDecodeError:
-            return result["stdout"]
+            # Try to find JSON array on a later line
+            for line in stdout.splitlines():
+                stripped = line.strip()
+                if stripped.startswith("["):
+                    try:
+                        data = json.loads(stripped)
+                        return json.dumps(data, indent=2)
+                    except json.JSONDecodeError:
+                        pass
+            return stdout
     return _format_result("Nodes listed", result)
 
 
