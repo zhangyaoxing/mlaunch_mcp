@@ -1,6 +1,6 @@
 ---
 name: mlaunch-mcp
-description: "Manage MongoDB clusters (single/replicaset/sharded) via mlaunch with `m`-managed binaries."
+description: "Manage MongoDB clusters (single/replicaset/sharded) via mlaunch with `m`-managed binaries. Use when the user asks about mlaunch, mongod, mongos, creating/starting/stopping/managing MongoDB clusters, replica sets, or sharded clusters."
 ---
 
 # mlaunch MCP Skill
