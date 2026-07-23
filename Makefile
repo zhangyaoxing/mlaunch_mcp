@@ -1,4 +1,4 @@
-.PHONY: venv test
+.PHONY: venv test integration-test
 
 VENV = .venv
 
@@ -8,4 +8,7 @@ venv:
 	uv pip install pytest pytest-asyncio
 
 test:
-	$(VENV)/bin/python -m pytest tests/ -v
+	$(VENV)/bin/python -m pytest tests/test_server.py -v
+
+integration-test:
+	$(VENV)/bin/python -m pytest tests/test_integration.py -v
