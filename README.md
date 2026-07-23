@@ -13,7 +13,7 @@ MCP (Model Context Protocol) server for [mtools/mlaunch](https://github.com/ruec
 ```bash
 git clone git@github.com:zhangyaoxing/mlaunch_mcp.git
 cd mlaunch_mcp
-pip install -e .
+make venv
 ```
 
 ## MongoDB Version Management with `m`
@@ -56,13 +56,17 @@ Add to your MCP client's config (e.g. OpenClaw `~/.openclaw/openclaw.json`):
 }
 ```
 
-The `--dir` argument sets the base directory for all cluster data:
+The `--dir` argument sets the base directory; each cluster is a subdirectory
+under it.  mlaunch creates its default `data/` inside each cluster directory:
 
 ```
 <base_dir>/
-├── rs70/           # cluster_name = "rs70"
-├── ss80/           # cluster_name = "ss80"
+├── rs70/
+│   └── data/       # mlaunch's default data directory
+├── ss80/
+│   └── data/
 └── cluster_a1b2c3/ # auto-generated random name
+    └── data/
 ```
 
 ## Available Tools
@@ -120,20 +124,16 @@ mlaunch_init(
 
 ### `mlaunch_list`
 
-Returns structured JSON with node details.  Example output:
+Returns structured JSON with node details:
 
-```
-PROCESS          PORT     STATUS     PID
-mongos           27017    running    12345
-config server    27024    running    12346
-shard01
-    mongod       27018    running    12347
-    mongod       27019    running    12348
-    mongod       27020    running    12349
-shard02
-    mongod       27021    running    12350
-    mongod       27022    running    12351
-    mongod       27023    running    12352
+```json
+[
+  {"hostname": "localhost", "port": 27017, "role": "mongos", "status": "running"},
+  {"hostname": "localhost", "port": 27024, "role": "configserver", "status": "running"},
+  {"hostname": "localhost", "port": 27018, "role": "shardsvr", "status": "running", "shard": "shard01"},
+  {"hostname": "localhost", "port": 27019, "role": "shardsvr", "status": "running", "shard": "shard01"},
+  {"hostname": "localhost", "port": 27020, "role": "shardsvr", "status": "running", "shard": "shard01"}
+]
 ```
 
 ### Other tools
@@ -179,14 +179,14 @@ skills/mlaunch-mcp/
 ## Security
 
 The combined path `<base_dir>/<cluster_name>` is resolved and validated
-against allowed base directories (`~/data/`, `/tmp/`, `/var/tmp/`).
+against allowed base directories (`~/data/`, `/tmp/`, `/var/tmp/`, `/data/`).
 Path-traversal in `cluster_name` (e.g. `../escape`) is blocked.
 
 ## Development
 
 ```bash
-pip install pytest pytest-asyncio
-pytest tests/ -v
+make venv   # create venv and install dependencies
+make test   # run tests
 ```
 
 ## License
