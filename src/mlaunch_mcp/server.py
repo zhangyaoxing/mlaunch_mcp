@@ -474,20 +474,24 @@ async def mlaunch_list(
                 return stdout
 
         # Restructure flat array into nested role-based groups.
-        # mlaunch may include None or non-dict items (e.g. separator strings)
-        # in the JSON array — skip those.
+        # mlaunch outputs section headers as strings (e.g. "shard01"),
+        # null separators, and nodes with a "process" field whose value
+        # may include leading spaces (e.g. "    primary").
         grouped: dict[str, Any] = {"mongos": [], "config": [], "shards": {}}
+        current_shard: str | None = None
         for node in data:
+            if isinstance(node, str):
+                current_shard = node.strip()
+                continue
             if not isinstance(node, dict):
                 continue
-            role = node.get("role", "")
-            if role == "mongos":
+            process = (node.get("process", "") or "").strip()
+            if process == "mongos":
                 grouped["mongos"].append(node)
-            elif role == "configserver":
+            elif process == "config server":
                 grouped["config"].append(node)
-            elif role == "shardsvr":
-                shard = node.get("shard", "unknown")
-                grouped["shards"].setdefault(shard, []).append(node)
+            elif process and current_shard:
+                grouped["shards"].setdefault(current_shard, []).append(node)
 
         return json.dumps(grouped, indent=2)
     return _format_result("Nodes listed", result)
