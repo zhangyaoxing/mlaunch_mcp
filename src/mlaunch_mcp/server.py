@@ -208,7 +208,7 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
         name: Replica set name.
         arbiter: Add an arbiter node to the replica set.
         priority: Enable priority-based elections in the replica set.
-        sharded: Shard definitions, e.g. '2' or '2/3'.
+        sharded: Number of shards, e.g. '2'. Node count per shard via nodes.
         config: Number of config server nodes (sharded only, default: 1).
         csrs: Use a replica set for config servers (sharded only).
         mongos: Number of mongos routers (sharded only, default: 1).
@@ -247,7 +247,7 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
         if not sharded:
             return (
                 "Error: 'sharded' parameter is required when topology='sharded'. "
-                "Examples: sharded='2' (2 shards) or sharded='2/3' (2 shards × 3 nodes)."
+                "Examples: sharded='2' (2 shards, add nodes=3 for 3 nodes per shard)."
             )
         # MongoDB 3.6+ requires shards to be replica sets.
         cmd_args.append("--replicaset")
