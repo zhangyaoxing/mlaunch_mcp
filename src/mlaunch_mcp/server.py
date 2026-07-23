@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
+import os
 import secrets
 import shlex
 import sys
@@ -78,11 +79,20 @@ def _random_cluster_name() -> str:
 
 async def _run_mlaunch(
     args: list[str],
+    *,
+    cwd: str | None = None,
     timeout: int = DEFAULT_TIMEOUT,
     input_data: str | None = None,
 ) -> dict[str, Any]:
-    """Run an mlaunch command and return structured results."""
+    """Run an mlaunch command and return structured results.
+
+    If *cwd* is given, the command runs in that working directory
+    (mlaunch uses its default ./data subdirectory within it).
+    """
     cmd = ["mlaunch"] + args
+
+    if cwd:
+        os.makedirs(cwd, exist_ok=True)
 
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -91,6 +101,7 @@ async def _run_mlaunch(
             stderr=asyncio.subprocess.PIPE,
             stdin=asyncio.subprocess.PIPE if input_data else None,
             start_new_session=True,
+            cwd=cwd,
         )
 
         stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -287,12 +298,10 @@ async def mlaunch_init(  # pylint: disable=too-many-arguments,too-many-locals,to
     if hostname:
         cmd_args.extend(["--hostname", hostname])
 
-    cmd_args.extend(["--dir", cluster_dir])
-
     if verbose:
         cmd_args.append("--verbose")
 
-    result = await _run_mlaunch(cmd_args, timeout=DEFAULT_TIMEOUT)
+    result = await _run_mlaunch(cmd_args, cwd=cluster_dir, timeout=DEFAULT_TIMEOUT)
 
     if result["success"]:
         return (
@@ -328,11 +337,10 @@ async def mlaunch_start(
     cmd_args = ["start"]
     if tags:
         cmd_args.extend(shlex.split(tags))
-    cmd_args.extend(["--dir", cluster_dir])
     if verbose:
         cmd_args.append("--verbose")
 
-    result = await _run_mlaunch(cmd_args)
+    result = await _run_mlaunch(cmd_args, cwd=cluster_dir)
     return _format_result("Nodes started", result)
 
 
@@ -357,11 +365,10 @@ async def mlaunch_stop(
     cmd_args = ["stop"]
     if tags:
         cmd_args.extend(shlex.split(tags))
-    cmd_args.extend(["--dir", cluster_dir])
     if verbose:
         cmd_args.append("--verbose")
 
-    result = await _run_mlaunch(cmd_args)
+    result = await _run_mlaunch(cmd_args, cwd=cluster_dir)
     return _format_result("Nodes stopped", result)
 
 
@@ -386,11 +393,10 @@ async def mlaunch_restart(
     cmd_args = ["restart"]
     if tags:
         cmd_args.extend(shlex.split(tags))
-    cmd_args.extend(["--dir", cluster_dir])
     if verbose:
         cmd_args.append("--verbose")
 
-    result = await _run_mlaunch(cmd_args)
+    result = await _run_mlaunch(cmd_args, cwd=cluster_dir)
     return _format_result("Nodes restarted", result)
 
 
@@ -412,11 +418,11 @@ async def mlaunch_list(
     except ValueError as e:
         return str(e)
 
-    cmd_args = ["list", "--json", "--dir", cluster_dir]
+    cmd_args = ["list", "--json"]
     if verbose:
         cmd_args.append("--verbose")
 
-    result = await _run_mlaunch(cmd_args)
+    result = await _run_mlaunch(cmd_args, cwd=cluster_dir)
 
     if result["success"]:
         try:
@@ -452,11 +458,10 @@ async def mlaunch_kill(
         cmd_args.extend(shlex.split(tags))
     if signal:
         cmd_args.extend(["--signal", signal])
-    cmd_args.extend(["--dir", cluster_dir])
     if verbose:
         cmd_args.append("--verbose")
 
-    result = await _run_mlaunch(cmd_args)
+    result = await _run_mlaunch(cmd_args, cwd=cluster_dir)
     return _format_result("Signal sent", result)
 
 
